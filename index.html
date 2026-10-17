@@ -63,14 +63,14 @@ td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
 
 <script>
 // 1) Paste your Supabase project values (Project Settings > API). Leave empty to try demo mode.
-const SUPABASE_URL = "https://hxbnyucfzkxhfbblabhn.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_9xYvfdvrgj7_Ur3HMHQzKw_IUUYqqZW";
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
 
 const sb = SUPABASE_URL ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const $ = id => document.getElementById(id);
 const pad = n => String(n).padStart(2, "0");
 const hm = t => t.slice(0, 5);
-let user = null, me = {}, isT = false, nm = "", classes = [], log = [], notices = [], page = "Dashboard";
+let user = null, me = {}, isT = false, nm = "", classes = [], log = [], notices = [], college = {}, page = "Dashboard";
 
 // ---------- data layer (Supabase, or in-memory demo) ----------
 const demo = {
@@ -84,7 +84,9 @@ const demo = {
 };
 async function loadClasses(){
   if(!sb) return demo.classes;
-  const { data } = await sb.from("classes").select("*").eq("day_of_week", new Date().getDay()).order("start_time");
+  let q = sb.from("classes").select("*").eq("day_of_week", new Date().getDay()).order("start_time");
+  if(isT) q = q.eq("teacher_id", user.id);
+  const { data } = await q;
   return data || [];
 }
 async function loadLog(){
@@ -121,17 +123,19 @@ async function mark(kind){
   const m = $("msg"); m.className = ""; m.textContent = "Getting your location…";
   try{
     const cls = currentClass();
+    if(!cls) throw new Error("You are not in a class today. Ask your teacher to add you.");
     const p = await getPosition(), {latitude:lat, longitude:lng, accuracy} = p.coords;
     let status = "no_geofence", dist = null;
-    if(cls && cls.lat != null){
-      dist = distance(lat, lng, cls.lat, cls.lng);
-      status = dist <= (cls.radius_m || 150) ? "on_site" : "off_site";
+    const tl = cls.lat ?? college.college_lat, tg = cls.lng ?? college.college_lng, rad = cls.lat != null ? cls.radius_m : college.college_radius_m;
+    if(tl != null && tg != null){
+      dist = distance(lat, lng, tl, tg);
+      status = dist <= (rad || 150) ? "on_site" : "off_site";
     }
     await saveEntry({class_id: cls?.id, title: cls?.title, kind, lat, lng, accuracy_m: accuracy, distance_m: dist, status});
     const label = kind === "check_in" ? "Checked in" : "Checked out";
     m.className = status === "off_site" ? "bad" : "ok";
     m.textContent = status === "off_site"
-      ? `${label} at ${new Date().toLocaleTimeString()}, but you are ${Math.round(dist)} m from ${cls.room || "the class"}. Marked off site.`
+      ? `${label} at ${new Date().toLocaleTimeString()}, but you are ${Math.round(dist)} m from ${cls.room || "the college"}. Marked off site.`
       : `${label} at ${new Date().toLocaleTimeString()} (accuracy ±${Math.round(accuracy)} m).`;
     log = await loadLog(); if(page === "Attendance") renderLog();
   }catch(e){ m.className = "bad"; m.textContent = e.message; }
@@ -140,7 +144,7 @@ async function mark(kind){
 
 // ---------- views ----------
 const NAV_S = ["Dashboard","Attendance","Schedule","Courses","Notices","Assignments","Settings"];
-const NAV_T = ["Dashboard","Attendance","Classes","Notices","People"];
+const NAV_T = ["Dashboard","Attendance","Classes","Notices","People","Settings"];
 function renderNav(){
   $("nav").innerHTML = (isT ? NAV_T : NAV_S).map(n => `<button class="${n===page?"on":""}" data-p="${n}">${n}</button>`).join("");
   $("nav").querySelectorAll("button").forEach(b => b.onclick = () => { page = b.dataset.p; render(); });
@@ -191,6 +195,7 @@ function render(){
     renderLog();
   } else if(page === "Schedule"){
     v.innerHTML = `<div class="card"><h2>Today's schedule</h2>${scheduleHTML()}</div>`;
+  } else if(page === "Settings"){ renderSettings();
   } else if(page === "Notices"){ v.innerHTML = noticesCard();
   } else if(page === "Classes" && isT){ renderClasses();
   } else if(page === "People" && isT){ renderPeople();
@@ -198,6 +203,70 @@ function render(){
     v.innerHTML = `<div class="card"><h2>${page}</h2><p style="color:var(--mute)">This section is ready for you to build. Add a table in Supabase and load it the same way as classes.</p></div>`;
   }
 }
+// ---------- settings ----------
+function renderSettings(){
+  $("view").innerHTML = `<div class="cols"><div class="card"><h2>My profile</h2><table>
+    <tr><td>Name</td><td>${esc(me.full_name || "—")}</td></tr>
+    <tr><td>${isT ? "Teacher ID" : "Roll No"}</td><td>${esc(me.login_id || "—")}</td></tr>
+    <tr><td>Role</td><td>${isT ? "Teacher" : "Student"}</td></tr>
+    <tr><td>College</td><td>${esc(college.college_name || "—")}</td></tr>
+    ${isT ? `<tr><td>Subject</td><td>${esc(me.subject || "—")}</td></tr>` : ""}</table></div>
+    <div class="card"><h2>Change password</h2><div class="qa"><input id="np1" type="password" placeholder="New password (6+ characters)" class="pill">
+    <input id="np2" type="password" placeholder="Repeat new password" class="pill"><button class="btn" onclick="changePw()">Save password</button></div><div id="smsg" style="margin-top:10px"></div></div></div>
+    ${isT ? collegeCard() : ""}<div class="card"><h2>Location</h2><p style="color:var(--mute);font-size:14px;margin-top:0">Attendance uses your phone or computer location. Test that it works on this device before class.</p>
+    <button class="btn alt" onclick="testLoc()">Test my location</button><div id="lmsg2" style="margin-top:10px"></div></div>`;
+}
+async function changePw(){
+  const a = $("np1").value, b = $("np2").value, m = $("smsg"); m.className = "bad";
+  if(a.length < 6) return m.textContent = "Use at least 6 characters.";
+  if(a !== b) return m.textContent = "The two passwords do not match.";
+  if(!sb) return m.textContent = "Not available in demo mode.";
+  const { error } = await sb.auth.updateUser({password:a});
+  if(error) return m.textContent = error.message;
+  m.className = "ok"; m.textContent = "Password changed. Use it the next time you log in."; $("np1").value = $("np2").value = "";
+}
+async function testLoc(){
+  const m = $("lmsg2"); m.className = ""; m.textContent = "Checking…";
+  try{ const p = await getPosition(); m.className = "ok"; m.textContent = "Location works (accuracy ±" + Math.round(p.coords.accuracy) + " m)."; }
+  catch(e){ m.className = "bad"; m.textContent = e.message; }
+}
+
+// ---------- college location + class students ----------
+function collegeCard(){
+  const c = college;
+  return `<div class="card"><h2>College location (default)</h2><p style="color:var(--mute);font-size:14px;margin-top:0">Used for attendance in every class that has no location of its own. Stand inside the college and press the location button.</p>
+    <div class="qa"><input id="cn" class="pill" placeholder="College name" value="${esc(c.college_name)}"><input id="cl1" class="pill" placeholder="Latitude" value="${c.college_lat ?? ""}">
+    <input id="cl2" class="pill" placeholder="Longitude" value="${c.college_lng ?? ""}"><input id="cl3" type="number" class="pill" placeholder="Allowed radius in metres (300)" value="${c.college_radius_m ?? ""}">
+    <button class="btn alt" onclick="useHereCollege()">Use my current location</button><button class="btn" onclick="saveCollege()">Save college location</button></div><div id="cmsg" style="margin-top:10px"></div></div>`;
+}
+async function useHereCollege(){ try{ const p = await getPosition(); $("cl1").value = p.coords.latitude.toFixed(6); $("cl2").value = p.coords.longitude.toFixed(6); }catch(e){ $("cmsg").className = "bad"; $("cmsg").textContent = e.message; } }
+async function saveCollege(){
+  const n = x => $(x).value ? +$(x).value : null, m = $("cmsg");
+  const row = {college_name:$("cn").value.trim(), college_lat:n("cl1"), college_lng:n("cl2"), college_radius_m:n("cl3") || 300};
+  if(sb){ const { error } = await sb.from("app_settings").update(row).eq("id", 1); if(error){ m.className = "bad"; return m.textContent = error.message; } }
+  college = row; m.className = "ok"; m.textContent = "College location saved.";
+}
+async function manageStudents(cid){
+  const cls = (await (sb ? sb.from("classes").select("*").eq("id", cid) : Promise.resolve({data:demo.classes.filter(c => c.id === cid)}))).data[0];
+  let studs = [{id:"d", full_name:"Demo student", login_id:"101"}], enr = (demo.enr = demo.enr || {})[cid] || [];
+  if(sb){
+    studs = (await sb.from("profiles").select("id,full_name,login_id").eq("role","student").order("login_id")).data || [];
+    enr = ((await sb.from("enrollments").select("student_id").eq("class_id", cid)).data || []).map(x => x.student_id);
+  }
+  $("view").innerHTML = `<div class="card"><h2>Students in ${esc(cls.title)}</h2><p style="color:var(--mute);font-size:14px;margin-top:0">Tick the students who attend this class. Only they can mark attendance for it.</p>
+    <div style="max-height:380px;overflow:auto">${studs.map(p => `<label style="display:block;padding:6px 0"><input type="checkbox" class="stu" value="${p.id}" ${enr.includes(p.id) ? "checked" : ""}> ${esc(p.login_id)} · ${esc(p.full_name)}</label>`).join("") || "<p>No students yet. Add them on the People page.</p>"}</div>
+    <div style="margin-top:12px"><button class="btn alt" onclick="document.querySelectorAll('.stu').forEach(x => x.checked = true)">Select all</button>
+    <button class="btn" onclick="saveEnroll('${cid}')">Save</button> <button class="btn alt" onclick="renderClasses()">Back</button></div><div id="emsg" style="margin-top:10px"></div></div>`;
+}
+async function saveEnroll(cid){
+  const ids = [...document.querySelectorAll(".stu:checked")].map(x => x.value), m = $("emsg");
+  if(sb){
+    await sb.from("enrollments").delete().eq("class_id", cid);
+    if(ids.length){ const { error } = await sb.from("enrollments").insert(ids.map(s => ({class_id:cid, student_id:s}))); if(error){ m.className = "bad"; return m.textContent = error.message; } }
+  } else demo.enr[cid] = ids;
+  m.className = "ok"; m.textContent = ids.length + " student(s) saved for this class.";
+}
+
 // ---------- announcements ----------
 const esc = t => String(t ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
 async function loadNotices(){
@@ -254,10 +323,10 @@ async function delNotice(id){
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 async function renderClasses(){
   let all = demo.classes;
-  if(sb) all = (await sb.from("classes").select("*").order("day_of_week").order("start_time")).data || [];
+  if(sb) all = (await sb.from("classes").select("*").eq("teacher_id", user.id).order("day_of_week").order("start_time")).data || [];
   $("view").innerHTML = `<div class="cols"><div class="card"><h2>All classes</h2><table><thead><tr><th>Day</th><th>Time</th><th>Class</th><th>Radius</th><th></th></tr></thead><tbody>
     ${all.map(c => `<tr><td>${c.day_of_week != null ? DAYS[c.day_of_week] : "Daily"}</td><td>${hm(c.start_time)}–${hm(c.end_time)}</td><td>${c.title}${c.room ? " (" + c.room + ")" : ""}</td>
-    <td>${c.lat != null ? (c.radius_m || 150) + " m" : "No location"}</td><td><button class="btn alt" onclick="delClass('${c.id}')">Delete</button></td></tr>`).join("") || `<tr><td colspan="5" style="color:var(--mute)">No classes yet. Add one with the form.</td></tr>`}</tbody></table></div>
+    <td>${c.lat != null ? (c.radius_m || 150) + " m" : "College default"}</td><td style="white-space:nowrap"><button class="btn alt" onclick="manageStudents('${c.id}')">Students</button> <button class="btn alt" onclick="delClass('${c.id}')">Delete</button></td></tr>`).join("") || `<tr><td colspan="5" style="color:var(--mute)">No classes yet. Add one with the form.</td></tr>`}</tbody></table></div>
     <div class="card"><h2>Add class</h2><div class="qa">
     <input id="ct" placeholder="Class title" class="pill"><input id="cr" placeholder="Room" class="pill">
     <select id="cd" class="pill">${DAYS.map((d,i) => `<option value="${i}" ${i === new Date().getDay() ? "selected" : ""}>${d}</option>`).join("")}</select>
@@ -278,13 +347,57 @@ async function delClass(id){
   if(sb) await sb.from("classes").delete().eq("id", id); else demo.classes = demo.classes.filter(c => c.id !== id);
   classes = await loadClasses(); renderClasses();
 }
-async function renderPeople(){
+let lastAdded = [];
+async function renderPeople(keep){
+  if(keep !== true) lastAdded = [];
   let all = [{id:"d",full_name:"Demo student",login_id:"101",role:"student"}];
   if(sb) all = (await sb.from("profiles").select("*").order("role",{ascending:false}).order("login_id")).data || [];
-  $("view").innerHTML = `<div class="card"><h2>People</h2><p style="color:var(--mute);font-size:14px;margin-top:0">Add people with the create_login command in setup.sql. Here you can promote a student to teacher and set a teacher's subject.</p>
-    <div style="overflow-x:auto"><table><thead><tr><th>Roll No / ID</th><th>Name</th><th>Subject</th><th>Role</th></tr></thead><tbody>${all.map(p => `<tr><td>${esc(p.login_id)}</td><td>${esc(p.full_name)}</td>
+  const ok = lastAdded.filter(x => x.password);
+  const results = lastAdded.length ? `<p class="ok">${ok.length} of ${lastAdded.length} added. Share these passwords now; they are not shown again.</p>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Password</th></tr></thead><tbody>${lastAdded.map(x => `<tr><td>${esc(x.id)}</td><td>${esc(x.name)}</td>
+    <td>${x.password ? `<code>${esc(x.password)}</code>` : `<span class="bad">${esc(x.error)}</span>`}</td></tr>`).join("")}</tbody></table>
+    ${ok.length ? `<button class="btn alt" style="margin-top:10px" onclick="downloadCreds()">Download CSV</button>` : ""}` : "";
+  $("view").innerHTML = `<div class="card"><h2>People</h2>
+    <div style="overflow-x:auto"><table><thead><tr><th>Roll No / ID</th><th>Name</th><th>Subject</th><th>Role</th><th></th></tr></thead><tbody>${all.map(p => `<tr><td>${esc(p.login_id)}</td><td>${esc(p.full_name)}</td>
     <td>${p.role === "teacher" ? `<input value="${esc(p.subject)}" placeholder="Subject" onchange="setSubject('${p.id}',this.value)" style="padding:6px;border:1px solid var(--line);border-radius:6px;font:inherit;width:150px">` : "—"}</td>
-    <td><select onchange="setRole('${p.id}',this.value)" ${p.id === user.id ? "disabled" : ""}><option value="student" ${p.role==="student"?"selected":""}>Student</option><option value="teacher" ${p.role==="teacher"?"selected":""}>Teacher</option></select></td></tr>`).join("")}</tbody></table></div><div id="msg"></div></div>`;
+    <td><select onchange="setRole('${p.id}',this.value)" ${p.id === user.id ? "disabled" : ""}><option value="student" ${p.role==="student"?"selected":""}>Student</option><option value="teacher" ${p.role==="teacher"?"selected":""}>Teacher</option></select></td>
+    <td style="white-space:nowrap"><button class="btn alt" onclick="resetPw('${esc(p.login_id)}')">Reset password</button>
+    <button class="btn alt" style="color:#b3261e;margin-left:6px" ${p.id === user.id ? "disabled" : ""} onclick="delPerson('${esc(p.login_id)}','${esc(p.full_name)}')">Delete</button></td></tr>`).join("")}</tbody></table></div><div id="msg"></div></div>
+    <div class="card"><h2>Add people</h2>
+    <select id="prole" class="pill" onchange="$('plines').placeholder = this.value === 'teacher' ? 'T002, Teacher Name, Physics' : '104, Asha Patil'"><option value="student">Students (Roll No, Name)</option><option value="teacher">Teachers (Teacher ID, Name, Subject)</option></select>
+    <p style="color:var(--mute);font-size:14px">One person per line. Use letters and numbers only for the ID. Each gets a temporary password.</p>
+    <textarea id="plines" rows="6" class="pill" style="width:100%;font:inherit" placeholder="104, Asha Patil"></textarea>
+    <button class="btn" style="margin-top:8px" id="pgo" onclick="addPeople()">Add</button><div id="pres" style="margin-top:12px">${results}</div></div>`;
+}
+async function addPeople(){
+  const role = $("prole").value, out = $("pres");
+  const rows = $("plines").value.split("\n").map(l => l.trim()).filter(Boolean).map(l => {
+    const m = l.split(/[,\t;]/).map(x => x.trim()); return {id:m[0] || "", name:m[1] || "", subject:m[2] || null};
+  });
+  if(!rows.length){ out.className = "bad"; return out.textContent = "Enter at least one line."; }
+  if(!sb){ out.className = "bad"; return out.textContent = "Adding people needs Supabase. It does not work in demo mode."; }
+  $("pgo").disabled = true; out.className = ""; out.textContent = "Adding…";
+  const res = [];
+  for(const r of rows){
+    const { data, error } = await sb.rpc("add_person", {p_login:r.id, p_name:r.name, p_role:role, p_subject: role === "teacher" ? r.subject : null});
+    res.push({...r, name: r.name || r.id, password: data, error: error ? error.message : (data ? null : "Already exists")});
+  }
+  lastAdded = res; renderPeople(true);
+}
+function downloadCreds(){
+  const csv = "id,name,password\n" + lastAdded.filter(x => x.password).map(c => [c.id, c.name, c.password].map(v => '"' + String(v).replace(/"/g,'""') + '"').join(",")).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], {type:"text/csv"})); a.download = "new-logins.csv"; a.click();
+}
+async function delPerson(id, name){
+  if(!sb || !confirm("Delete " + name + " (" + id + ")? Their attendance records will also be deleted. This cannot be undone.")) return;
+  const { error } = await sb.rpc("delete_person", {p_login:id});
+  await renderPeople();
+  $("msg").className = error ? "bad" : "ok"; $("msg").textContent = error ? error.message : name + " (" + id + ") was deleted.";
+}
+async function resetPw(id){
+  if(!sb || !confirm("Reset the password for " + id + "?")) return;
+  const { data, error } = await sb.rpc("reset_password", {p_login:id});
+  $("msg").className = error ? "bad" : "ok"; $("msg").textContent = error ? error.message : "New password for " + id + ": " + data;
 }
 async function setSubject(id, subject){
   if(!sb) return;
@@ -305,7 +418,9 @@ async function start(u){
   isT = me.role === "teacher";
   nm = me.full_name || me.login_id || "Student";
   $("uname").textContent = nm + (isT ? " · " + (me.subject || "Teacher") : me.login_id ? " · Roll " + me.login_id : "");
-  classes = await loadClasses(); log = await loadLog(); notices = await loadNotices(); page = "Dashboard"; render();
+  classes = await loadClasses(); log = await loadLog(); notices = await loadNotices();
+  if(sb){ const { data } = await sb.from("app_settings").select("*").eq("id", 1).single(); college = data || {}; }
+  page = "Dashboard"; render();
 }
 async function login(){
   const id = $("em").value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
