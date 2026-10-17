@@ -63,8 +63,8 @@ td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
 
 <script>
 // 1) Paste your Supabase project values (Project Settings > API). Leave empty to try demo mode.
-const SUPABASE_URL = "https://gepwmynranvttzywpxiq.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_HHiVoy1HhxUES1w0dUrq6w_ZhZEoPqH";
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
 
 const sb = SUPABASE_URL ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const $ = id => document.getElementById(id);
@@ -144,7 +144,7 @@ async function mark(kind){
 
 // ---------- views ----------
 const NAV_S = ["Dashboard","Attendance","Schedule","Courses","Notices","Assignments","Settings"];
-const NAV_T = ["Dashboard","Attendance","Classes","Notices","People","Settings"];
+const NAV_T = ["Dashboard","Attendance","Classes","Assignments","Notices","People","Settings"];
 function renderNav(){
   $("nav").innerHTML = (isT ? NAV_T : NAV_S).map(n => `<button class="${n===page?"on":""}" data-p="${n}">${n}</button>`).join("");
   $("nav").querySelectorAll("button").forEach(b => b.onclick = () => { page = b.dataset.p; render(); });
@@ -160,7 +160,7 @@ function actions(){
     <button class="btn mk" onclick="mark('check_in')">Check in here</button>
     <button class="btn mk" onclick="mark('check_out')">Check out</button>
     <button class="btn" onclick="go('Assignments')">Submit assignment</button>
-    <button class="btn" onclick="go('Courses')">View grades</button></div>`;
+    <button class="btn" onclick="go('Courses')">My courses</button></div>`;
 }
 window.go = p => { page = p; render(); };
 function renderLog(){
@@ -195,6 +195,8 @@ function render(){
     renderLog();
   } else if(page === "Schedule"){
     v.innerHTML = `<div class="card"><h2>Today's schedule</h2>${scheduleHTML()}</div>`;
+  } else if(page === "Courses" && !isT){ renderCourses();
+  } else if(page === "Assignments"){ renderAssignments();
   } else if(page === "Settings"){ renderSettings();
   } else if(page === "Notices"){ v.innerHTML = noticesCard();
   } else if(page === "Classes" && isT){ renderClasses();
@@ -267,6 +269,73 @@ async function saveEnroll(cid){
   m.className = "ok"; m.textContent = ids.length + " student(s) saved for this class.";
 }
 
+// ---------- courses + assignments ----------
+const need = t => `<div class="card"><h2>${t}</h2><p style="color:var(--mute)">This page needs Supabase. Connect your project to use it.</p></div>`;
+async function renderCourses(){
+  if(!sb) return $("view").innerHTML = need("My courses");
+  const rows = (await sb.from("classes").select("*, teacher:profiles!teacher_id(full_name,subject)").order("title")).data || [];
+  const g = {};
+  rows.forEach(c => (g[c.title + "|" + c.teacher_id] = g[c.title + "|" + c.teacher_id] || {c, slots:[]}).slots.push(c));
+  $("view").innerHTML = `<div class="card"><h2>My courses</h2><div style="overflow-x:auto"><table><thead><tr><th>Course</th><th>Teacher</th><th>Schedule</th><th>Room</th></tr></thead><tbody>
+    ${Object.values(g).map(x => `<tr><td><b>${esc(x.c.title)}</b></td><td>${esc(x.c.teacher?.full_name || "—")}${x.c.teacher?.subject ? " · " + esc(x.c.teacher.subject) : ""}</td>
+    <td>${x.slots.map(c => DAYS[c.day_of_week].slice(0,3) + " " + hm(c.start_time) + "–" + hm(c.end_time)).join("<br>")}</td><td>${esc(x.c.room || "—")}</td></tr>`).join("")
+    || `<tr><td colspan="4" style="color:var(--mute)">You are not in any course yet. Your teacher adds you to classes.</td></tr>`}</tbody></table></div></div>`;
+}
+async function renderAssignments(){
+  if(!sb) return $("view").innerHTML = need("Assignments");
+  const a = (await sb.from("assignments").select("*, classes(title)").order("due_at",{ascending:true,nullsFirst:false})).data || [];
+  const s = (await sb.from("submissions").select("*, profiles(full_name,login_id)")).data || [];
+  let form = "";
+  if(isT){
+    const mine = (await sb.from("classes").select("id,title,day_of_week,start_time").eq("teacher_id", user.id).order("title")).data || [];
+    form = `<div class="card"><h2>New assignment</h2><div class="qa"><select id="ac" class="pill">${mine.map(c => `<option value="${c.id}">${esc(c.title)} (${DAYS[c.day_of_week].slice(0,3)} ${hm(c.start_time)})</option>`).join("")}</select>
+      <input id="at" class="pill" placeholder="Title"><textarea id="ad" rows="3" class="pill" style="font:inherit" placeholder="Details (optional)"></textarea>
+      <input id="adue" type="datetime-local" class="pill"><button class="btn" onclick="postAsg()">Post assignment</button></div><div id="amsg" style="margin-top:10px"></div></div>`;
+  }
+  const list = a.map(x => {
+    const subs = s.filter(r => r.assignment_id === x.id), mine = subs[0];
+    const due = x.due_at ? new Date(x.due_at).toLocaleString() : "No due date", late = x.due_at && new Date(x.due_at) < new Date();
+    const head = `<b>${esc(x.title)}</b> <span style="color:var(--mute);font-size:12px">${esc(x.classes?.title)} · Due ${due}</span><div style="font-size:14px;margin-top:4px;white-space:pre-wrap">${esc(x.details)}</div>`;
+    const file = r => r.file_path ? ` <button class="btn alt" onclick="openFile('${esc(r.file_path)}','submissions')">${esc(r.file_name)}</button>` : "";
+    const body = isT
+      ? `<div style="margin-top:8px"><button class="btn alt" onclick="$('sub_${x.id}').classList.toggle('hide')">Submissions (${subs.length})</button> <button class="btn alt" onclick="delAsg('${x.id}')">Delete</button></div>
+         <div id="sub_${x.id}" class="hide" style="margin-top:8px"><table>${subs.map(r => `<tr><td>${esc(r.profiles?.login_id)} · ${esc(r.profiles?.full_name)}</td><td>${new Date(r.submitted_at).toLocaleString()}</td><td>${esc(r.note)}${file(r)}</td></tr>`).join("") || "<tr><td style='color:var(--mute)'>No submissions yet.</td></tr>"}</table></div>`
+      : `<div style="margin:8px 0"><span class="tag ${mine ? "on_site" : late ? "off_site" : "no_geofence"}">${mine ? "Submitted " + new Date(mine.submitted_at).toLocaleString() : late ? "Overdue" : "Pending"}</span></div>
+         <div class="qa"><textarea id="sn_${x.id}" rows="2" class="pill" style="font:inherit" placeholder="Note to your teacher">${esc(mine?.note)}</textarea><input id="sf_${x.id}" type="file" class="pill">
+         <button class="btn" onclick="submitAsg('${x.id}')">${mine ? "Resubmit" : "Submit"}</button></div><div id="sm_${x.id}" style="margin-top:6px"></div>`;
+    return `<div style="padding:12px 0;border-top:1px solid var(--line)">${head}${body}</div>`;
+  }).join("") || `<p style="color:var(--mute)">${isT ? "No assignments yet. Post one above." : "No assignments yet."}</p>`;
+  $("view").innerHTML = form + `<div class="card"><h2>${isT ? "Your assignments" : "My assignments"}</h2>${list}</div>`;
+}
+async function postAsg(){
+  const m = $("amsg"), t = $("at").value.trim(), c = $("ac").value; m.className = "bad";
+  if(!c) return m.textContent = "Add a class first on the Classes page.";
+  if(!t) return m.textContent = "Enter a title.";
+  const { error } = await sb.from("assignments").insert({class_id:c, title:t, details:$("ad").value.trim(), due_at: $("adue").value ? new Date($("adue").value).toISOString() : null});
+  if(error) return m.textContent = error.message;
+  renderAssignments();
+}
+async function delAsg(id){
+  if(!confirm("Delete this assignment and all its submissions?")) return;
+  await sb.from("assignments").delete().eq("id", id); renderAssignments();
+}
+async function submitAsg(id){
+  const m = $("sm_" + id), note = $("sn_" + id).value.trim(), f = $("sf_" + id).files[0]; m.className = "bad";
+  if(!note && !f) return m.textContent = "Write a note or attach a file.";
+  if(f && f.size > 10*1024*1024) return m.textContent = "The file is larger than 10 MB.";
+  m.className = ""; m.textContent = "Submitting…";
+  try{
+    const row = {assignment_id:id, student_id:user.id, note, submitted_at:new Date().toISOString()};
+    if(f){
+      const path = user.id + "/" + id + "_" + Date.now() + "_" + f.name.replace(/[^A-Za-z0-9._-]/g, "_");
+      const { error } = await sb.storage.from("submissions").upload(path, f); if(error) throw error;
+      row.file_path = path; row.file_name = f.name;
+    }
+    const { error } = await sb.from("submissions").upsert(row); if(error) throw error;
+    renderAssignments();
+  }catch(e){ m.className = "bad"; m.textContent = e.message; }
+}
+
 // ---------- announcements ----------
 const esc = t => String(t ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
 async function loadNotices(){
@@ -305,10 +374,10 @@ async function postNotice(){
     notices = await loadNotices(); render();
   }catch(e){ m.className = "bad"; m.textContent = e.message; $("npost").disabled = false; }
 }
-async function openFile(p){
+async function openFile(p, bucket = "notices"){
   if(!sb) return window.open(p, "_blank");
   const w = window.open("", "_blank");
-  const { data, error } = await sb.storage.from("notices").createSignedUrl(p, 3600);
+  const { data, error } = await sb.storage.from(bucket).createSignedUrl(p, 3600);
   if(error){ w.close(); return alert(error.message); }
   w.location = data.signedUrl;
 }
