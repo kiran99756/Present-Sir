@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Present Sir</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root{--navy:#14264d;--navy2:#1d3768;--bg:#eef2fa;--card:#fff;--ink:#14213d;--mute:#64708a;--green:#2fb67c;--blue:#2f6fd6;--line:#e3e8f2}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+aside{background:linear-gradient(180deg,#1b3366,var(--navy));padding:16px 12px;color:#dbe4f7}
+aside button{display:block;width:100%;text-align:left;background:none;border:0;color:inherit;font:inherit;padding:10px 14px;border-radius:8px;cursor:pointer;margin-bottom:4px}
+aside button:hover{background:#ffffff14}
+aside button.on{background:#ffffff22;color:#fff;font-weight:600}
+main{padding:0 28px 28px}
+header{display:flex;justify-content:space-between;align-items:center;padding:14px 0}
+header h1{margin:0;font-size:26px}header small{color:var(--mute)}
+.who{display:flex;gap:10px;align-items:center;font-size:14px}
+.btn{background:var(--navy2);color:#fff;border:0;border-radius:8px;padding:11px 16px;font:inherit;cursor:pointer}
+.btn:hover{background:var(--navy)}.btn.alt{background:#fff;color:var(--navy2);border:1px solid var(--line)}
+.btn:disabled{opacity:.5;cursor:wait}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin:12px 0 18px}
+.stat{border-radius:10px;padding:16px;color:#fff}
+.stat b{display:block;font-size:26px}.s1{background:linear-gradient(120deg,#2f6fd6,#1fb5b5)}.s2{background:linear-gradient(120deg,#2fb67c,#58c996)}.s3{background:linear-gradient(120deg,#3b4fb5,#6068d6)}
+.cols{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+.card{background:var(--card);border-radius:10px;padding:18px;box-shadow:0 1px 3px #14264d14;margin-bottom:16px}
+.card h2{margin:0 0 12px;font-size:17px}
+.row{display:grid;grid-template-columns:130px 1fr auto;gap:10px;align-items:center;margin-bottom:8px;font-size:14px}
+.pill{background:#e4e8f7;border-radius:6px;padding:9px 12px}.pill.now{background:#d9f3e6}
+.qa{display:grid;gap:10px}
+#msg{font-size:14px;margin:10px 0;min-height:20px}
+.ok{color:#17804f}.bad{color:#b3261e}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+.tag{padding:2px 8px;border-radius:10px;font-size:12px}.on_site{background:#d9f3e6;color:#17804f}.off_site{background:#fde3e1;color:#b3261e}.no_geofence{background:#e8eaf2;color:var(--mute)}
+#login{max-width:340px;margin:12vh auto;background:#fff;padding:26px;border-radius:12px;box-shadow:0 4px 20px #14264d1f}
+#login input{width:100%;padding:11px;margin:6px 0;border:1px solid var(--line);border-radius:8px;font:inherit}
+.hide{display:none!important}
+@media(max-width:800px){.app{grid-template-columns:1fr}aside{display:flex;overflow-x:auto}aside button{white-space:nowrap;width:auto}.stats,.cols{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div id="login" class="hide">
+  <h1 style="margin:0">Present Sir</h1><p style="color:var(--mute);margin-top:2px">Your Academic Journey Starts Here.</p>
+  <input id="em" placeholder="Roll No / Teacher ID" autocomplete="username"><input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <button class="btn" style="width:100%;margin-top:8px" id="signin">Log in</button>
+  <div id="lmsg" class="bad" style="font-size:14px;margin-top:8px"></div>
+</div>
+
+<div class="app hide" id="app">
+  <aside id="nav"></aside>
+  <main>
+    <header>
+      <div><h1>Present Sir</h1><small>Your Academic Journey Starts Here.</small></div>
+      <div class="who"><span id="uname"></span><button class="btn alt" id="logout">Logout</button></div>
+    </header>
+    <section id="view"></section>
+  </main>
+</div>
+
+<script>
+// 1) Paste your Supabase project values (Project Settings > API). Leave empty to try demo mode.
+const SUPABASE_URL = "https://hxbnyucfzkxhfbblabhn.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_9xYvfdvrgj7_Ur3HMHQzKw_IUUYqqZW";
+
+const sb = SUPABASE_URL ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, "0");
+const hm = t => t.slice(0, 5);
+let user = null, me = {}, isT = false, nm = "", classes = [], log = [], notices = [], page = "Dashboard";
+
+// ---------- data layer (Supabase, or in-memory demo) ----------
+const demo = {
+  classes: [
+    {id:"1",title:"Physics Lab",room:"Room 201",start_time:"09:00",end_time:"10:00"},
+    {id:"2",title:"Introduction to Computer Science",room:"Lecture Hall A",start_time:"10:00",end_time:"11:00"},
+    {id:"3",title:"Math Seminar",room:"Room 305",start_time:"11:30",end_time:"12:30"},
+    {id:"4",title:"Group Project Meeting",room:"Library",start_time:"13:00",end_time:"14:00"}],
+  log: [],
+  notices: [{id:"n1",title:"End-term exam schedule published",body:"Check the notice board for the full timetable.",created_at:new Date().toISOString()}]
+};
+async function loadClasses(){
+  if(!sb) return demo.classes;
+  const { data } = await sb.from("classes").select("*").eq("day_of_week", new Date().getDay()).order("start_time");
+  return data || [];
+}
+async function loadLog(){
+  if(!sb) return demo.log;
+  const { data } = await sb.from("attendance").select("*, classes(title), profiles(full_name,login_id)").order("created_at",{ascending:false}).limit(100);
+  return data || [];
+}
+async function saveEntry(e){
+  if(!sb){ demo.log.unshift({...e, created_at:new Date().toISOString(), classes:{title:e.title}}); return; }
+  const { error } = await sb.from("attendance").insert({class_id:e.class_id,kind:e.kind,lat:e.lat,lng:e.lng,accuracy_m:e.accuracy_m,distance_m:e.distance_m,status:e.status});
+  if(error) throw error;
+}
+
+// ---------- location ----------
+function getPosition(){
+  return new Promise((res, rej) => {
+    if(!navigator.geolocation) return rej(new Error("This browser does not support location."));
+    navigator.geolocation.getCurrentPosition(res, e => rej(new Error(
+      e.code === 1 ? "Location permission is blocked. Allow it in your browser settings and try again." : "Could not get your location. Try again outdoors or near a window.")),
+      {enableHighAccuracy:true, timeout:15000, maximumAge:0});
+  });
+}
+function distance(a,b,c,d){ // haversine, metres
+  const R=6371000,r=x=>x*Math.PI/180,dl=r(c-a),dn=r(d-b);
+  const h=Math.sin(dl/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(dn/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function currentClass(){
+  const n = pad(new Date().getHours())+":"+pad(new Date().getMinutes());
+  return classes.find(c => hm(c.start_time) <= n && n <= hm(c.end_time)) || classes.find(c => hm(c.start_time) > n) || classes[0];
+}
+async function mark(kind){
+  const btns = document.querySelectorAll(".mk"); btns.forEach(b => b.disabled = true);
+  const m = $("msg"); m.className = ""; m.textContent = "Getting your location…";
+  try{
+    const cls = currentClass();
+    const p = await getPosition(), {latitude:lat, longitude:lng, accuracy} = p.coords;
+    let status = "no_geofence", dist = null;
+    if(cls && cls.lat != null){
+      dist = distance(lat, lng, cls.lat, cls.lng);
+      status = dist <= (cls.radius_m || 150) ? "on_site" : "off_site";
+    }
+    await saveEntry({class_id: cls?.id, title: cls?.title, kind, lat, lng, accuracy_m: accuracy, distance_m: dist, status});
+    const label = kind === "check_in" ? "Checked in" : "Checked out";
+    m.className = status === "off_site" ? "bad" : "ok";
+    m.textContent = status === "off_site"
+      ? `${label} at ${new Date().toLocaleTimeString()}, but you are ${Math.round(dist)} m from ${cls.room || "the class"}. Marked off site.`
+      : `${label} at ${new Date().toLocaleTimeString()} (accuracy ±${Math.round(accuracy)} m).`;
+    log = await loadLog(); if(page === "Attendance") renderLog();
+  }catch(e){ m.className = "bad"; m.textContent = e.message; }
+  btns.forEach(b => b.disabled = false);
+}
+
+// ---------- views ----------
+const NAV_S = ["Dashboard","Attendance","Schedule","Courses","Notices","Assignments","Settings"];
+const NAV_T = ["Dashboard","Attendance","Classes","Notices","People"];
+function renderNav(){
+  $("nav").innerHTML = (isT ? NAV_T : NAV_S).map(n => `<button class="${n===page?"on":""}" data-p="${n}">${n}</button>`).join("");
+  $("nav").querySelectorAll("button").forEach(b => b.onclick = () => { page = b.dataset.p; render(); });
+}
+function scheduleHTML(){
+  const n = pad(new Date().getHours())+":"+pad(new Date().getMinutes());
+  return classes.map(c => `<div class="row"><span>${hm(c.start_time)} – ${hm(c.end_time)}</span>
+    <span class="pill ${hm(c.start_time)<=n&&n<=hm(c.end_time)?"now":""}">${c.title}${c.room?` (${c.room})`:""}</span></div>`).join("")
+    || "<p style='color:var(--mute)'>No classes today.</p>";
+}
+function actions(){
+  return `<div class="qa">
+    <button class="btn mk" onclick="mark('check_in')">Check in here</button>
+    <button class="btn mk" onclick="mark('check_out')">Check out</button>
+    <button class="btn" onclick="go('Assignments')">Submit assignment</button>
+    <button class="btn" onclick="go('Courses')">View grades</button></div>`;
+}
+window.go = p => { page = p; render(); };
+function renderLog(){
+  const t = $("logbody"); if(!t) return;
+  t.innerHTML = log.map(r => `<tr>${isT ? `<td>${esc(r.profiles?.full_name || "—")} (${esc(r.profiles?.login_id || "")})</td>` : ""}<td>${new Date(r.created_at).toLocaleString()}</td><td>${r.classes?.title || "—"}</td>
+    <td>${r.kind === "check_in" ? "Check in" : "Check out"}</td>
+    <td>${r.lat != null ? `<a href="https://maps.google.com/?q=${r.lat},${r.lng}" target="_blank" rel="noopener">${r.lat.toFixed(4)}, ${r.lng.toFixed(4)}</a>` : "—"}</td>
+    <td><span class="tag ${r.status}">${({on_site:"On site",off_site:"Off site",no_geofence:"No geofence"})[r.status]}</span></td></tr>`).join("")
+    || `<tr><td colspan="5" style="color:var(--mute)">No attendance yet. Use Check in to record your first entry.</td></tr>`;
+}
+function statCards(a){return `<div class="stats">${a.map((x,i)=>`<div class="stat s${i+1}">${x[0]}<b>${x[1]}</b></div>`).join("")}</div>`}
+function render(){
+  renderNav();
+  const v = $("view"), next = currentClass();
+  const today = log.filter(r => new Date(r.created_at).toDateString() === new Date().toDateString());
+  if(page === "Dashboard"){
+    const stats = isT
+      ? statCards([["Classes today",classes.length],["Check-ins today",today.filter(r=>r.kind==="check_in").length],["Off-site today",today.filter(r=>r.status==="off_site").length]])
+      : `<div class="stats"><div class="stat s1">Next class<b style="font-size:17px">${next ? next.title : "None today"}</b>${next ? "at " + hm(next.start_time) : ""}</div>
+         <div class="stat s2">Your entries today<b>${today.length}</b></div><div class="stat s3">Classes today<b>${classes.length}</b></div></div>`;
+    const side = isT
+      ? `<div class="qa"><button class="btn" onclick="go('Attendance')">View attendance</button><button class="btn" onclick="go('Classes')">Manage classes</button><button class="btn" onclick="go('People')">Manage teachers</button></div>`
+      : actions() + `<div id="msg"></div>`;
+    v.innerHTML = `<h2 style="margin:6px 0">${isT ? "Teacher dashboard" : "Welcome, " + nm + "!"}</h2>${stats}
+      <div class="cols"><div class="card"><h2>Today's schedule</h2>${scheduleHTML()}</div><div class="card"><h2>${isT ? "Manage" : "Quick actions"}</h2>${side}</div></div>${noticesCard()}`;
+  } else if(page === "Attendance"){
+    const table = `<div class="card"><h2>${isT ? "Student attendance" : "Attendance log"}</h2><div style="overflow-x:auto"><table>
+      <thead><tr>${isT ? "<th>Student</th>" : ""}<th>Time</th><th>Class</th><th>Type</th><th>Location</th><th>Status</th></tr></thead><tbody id="logbody"></tbody></table></div></div>`;
+    v.innerHTML = isT ? table : `<div class="cols">${table}<div class="card"><h2>Record attendance</h2>
+      <p style="color:var(--mute);font-size:14px">Your time and GPS position are saved and compared with the class location.</p>
+      <div class="qa"><button class="btn mk" onclick="mark('check_in')">Check in here</button><button class="btn mk" onclick="mark('check_out')">Check out</button></div><div id="msg"></div></div></div>`;
+    renderLog();
+  } else if(page === "Schedule"){
+    v.innerHTML = `<div class="card"><h2>Today's schedule</h2>${scheduleHTML()}</div>`;
+  } else if(page === "Notices"){ v.innerHTML = noticesCard();
+  } else if(page === "Classes" && isT){ renderClasses();
+  } else if(page === "People" && isT){ renderPeople();
+  } else {
+    v.innerHTML = `<div class="card"><h2>${page}</h2><p style="color:var(--mute)">This section is ready for you to build. Add a table in Supabase and load it the same way as classes.</p></div>`;
+  }
+}
+// ---------- announcements ----------
+const esc = t => String(t ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+async function loadNotices(){
+  if(!sb) return demo.notices;
+  const { data } = await sb.from("notices").select("*, profiles(full_name,subject)").order("created_at",{ascending:false}).limit(20);
+  return data || [];
+}
+function noticesCard(){
+  const form = isT ? `<div class="qa" style="margin-bottom:16px"><input id="nt" placeholder="Title" class="pill">
+    <textarea id="nb" rows="3" placeholder="Write a message for students" class="pill" style="font:inherit;resize:vertical"></textarea>
+    <input id="nf" type="file" class="pill"><button class="btn" id="npost" onclick="postNotice()">Post announcement</button><div id="nmsg"></div></div>` : "";
+  const list = notices.map(n => `<div style="padding:12px 0;border-top:1px solid var(--line)"><b>${esc(n.title)}</b>
+    <span style="color:var(--mute);font-size:12px">${new Date(n.created_at).toLocaleString()}</span>
+    ${n.profiles ? `<div style="color:var(--mute);font-size:12px">Posted by ${esc(n.profiles.full_name)}${n.profiles.subject ? " · " + esc(n.profiles.subject) : ""}</div>` : ""}
+    <div style="font-size:14px;margin-top:4px;white-space:pre-wrap">${esc(n.body)}</div>
+    ${n.file_path ? `<button class="btn alt" style="margin-top:8px" onclick="openFile('${esc(n.file_path)}')">Download ${esc(n.file_name)}</button>` : ""}
+    ${isT ? `<button class="btn alt" style="margin:8px 0 0 8px" onclick="delNotice('${n.id}')">Delete</button>` : ""}</div>`).join("")
+    || `<p style="color:var(--mute)">No announcements yet.</p>`;
+  return `<div class="card"><h2>Announcements</h2>${form}${list}</div>`;
+}
+async function postNotice(){
+  const t = $("nt").value.trim(), b = $("nb").value.trim(), f = $("nf").files[0], m = $("nmsg");
+  m.className = "bad";
+  if(!t) return m.textContent = "Enter a title.";
+  if(f && f.size > 10*1024*1024) return m.textContent = "The file is larger than 10 MB.";
+  $("npost").disabled = true; m.className = ""; m.textContent = "Posting…";
+  try{
+    let path = null;
+    if(f){
+      if(sb){ path = Date.now() + "_" + f.name.replace(/[^A-Za-z0-9._-]/g,"_"); const { error } = await sb.storage.from("notices").upload(path, f); if(error) throw error; }
+      else path = URL.createObjectURL(f);
+    }
+    const row = {title:t, body:b, file_path:path, file_name:f ? f.name : null};
+    if(sb){ const { error } = await sb.from("notices").insert(row); if(error) throw error; }
+    else demo.notices.unshift({...row, id:String(Date.now()), created_at:new Date().toISOString()});
+    notices = await loadNotices(); render();
+  }catch(e){ m.className = "bad"; m.textContent = e.message; $("npost").disabled = false; }
+}
+async function openFile(p){
+  if(!sb) return window.open(p, "_blank");
+  const w = window.open("", "_blank");
+  const { data, error } = await sb.storage.from("notices").createSignedUrl(p, 3600);
+  if(error){ w.close(); return alert(error.message); }
+  w.location = data.signedUrl;
+}
+async function delNotice(id){
+  const n = notices.find(x => x.id === id);
+  if(sb){ if(n?.file_path) await sb.storage.from("notices").remove([n.file_path]); await sb.from("notices").delete().eq("id", id); }
+  else demo.notices = demo.notices.filter(x => x.id !== id);
+  notices = await loadNotices(); render();
+}
+
+// ---------- teacher tools ----------
+const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+async function renderClasses(){
+  let all = demo.classes;
+  if(sb) all = (await sb.from("classes").select("*").order("day_of_week").order("start_time")).data || [];
+  $("view").innerHTML = `<div class="cols"><div class="card"><h2>All classes</h2><table><thead><tr><th>Day</th><th>Time</th><th>Class</th><th>Radius</th><th></th></tr></thead><tbody>
+    ${all.map(c => `<tr><td>${c.day_of_week != null ? DAYS[c.day_of_week] : "Daily"}</td><td>${hm(c.start_time)}–${hm(c.end_time)}</td><td>${c.title}${c.room ? " (" + c.room + ")" : ""}</td>
+    <td>${c.lat != null ? (c.radius_m || 150) + " m" : "No location"}</td><td><button class="btn alt" onclick="delClass('${c.id}')">Delete</button></td></tr>`).join("") || `<tr><td colspan="5" style="color:var(--mute)">No classes yet. Add one with the form.</td></tr>`}</tbody></table></div>
+    <div class="card"><h2>Add class</h2><div class="qa">
+    <input id="ct" placeholder="Class title" class="pill"><input id="cr" placeholder="Room" class="pill">
+    <select id="cd" class="pill">${DAYS.map((d,i) => `<option value="${i}" ${i === new Date().getDay() ? "selected" : ""}>${d}</option>`).join("")}</select>
+    <input id="cs" type="time" class="pill"><input id="ce" type="time" class="pill">
+    <input id="cla" placeholder="Latitude" class="pill"><input id="clo" placeholder="Longitude" class="pill"><input id="crad" type="number" placeholder="Allowed radius in metres (150)" class="pill">
+    <button class="btn alt" onclick="useHere()">Use my current location</button><button class="btn" onclick="addClass()">Save class</button></div><div id="msg"></div></div></div>`;
+}
+async function useHere(){ try{ const p = await getPosition(); $("cla").value = p.coords.latitude.toFixed(6); $("clo").value = p.coords.longitude.toFixed(6); }catch(e){ $("msg").className="bad"; $("msg").textContent = e.message; } }
+async function addClass(){
+  const n = x => $(x).value ? +$(x).value : null;
+  const c = {title:$("ct").value.trim(), room:$("cr").value.trim(), day_of_week:+$("cd").value, start_time:$("cs").value, end_time:$("ce").value, lat:n("cla"), lng:n("clo"), radius_m:n("crad") || 150};
+  if(!c.title || !c.start_time || !c.end_time){ $("msg").className="bad"; return $("msg").textContent = "Enter a title, start time and end time."; }
+  if(sb){ const { error } = await sb.from("classes").insert(c); if(error){ $("msg").className="bad"; return $("msg").textContent = error.message; } }
+  else demo.classes.push({...c, id:String(Date.now())});
+  classes = await loadClasses(); renderClasses();
+}
+async function delClass(id){
+  if(sb) await sb.from("classes").delete().eq("id", id); else demo.classes = demo.classes.filter(c => c.id !== id);
+  classes = await loadClasses(); renderClasses();
+}
+async function renderPeople(){
+  let all = [{id:"d",full_name:"Demo student",login_id:"101",role:"student"}];
+  if(sb) all = (await sb.from("profiles").select("*").order("role",{ascending:false}).order("login_id")).data || [];
+  $("view").innerHTML = `<div class="card"><h2>People</h2><p style="color:var(--mute);font-size:14px;margin-top:0">Add people with the create_login command in setup.sql. Here you can promote a student to teacher and set a teacher's subject.</p>
+    <div style="overflow-x:auto"><table><thead><tr><th>Roll No / ID</th><th>Name</th><th>Subject</th><th>Role</th></tr></thead><tbody>${all.map(p => `<tr><td>${esc(p.login_id)}</td><td>${esc(p.full_name)}</td>
+    <td>${p.role === "teacher" ? `<input value="${esc(p.subject)}" placeholder="Subject" onchange="setSubject('${p.id}',this.value)" style="padding:6px;border:1px solid var(--line);border-radius:6px;font:inherit;width:150px">` : "—"}</td>
+    <td><select onchange="setRole('${p.id}',this.value)" ${p.id === user.id ? "disabled" : ""}><option value="student" ${p.role==="student"?"selected":""}>Student</option><option value="teacher" ${p.role==="teacher"?"selected":""}>Teacher</option></select></td></tr>`).join("")}</tbody></table></div><div id="msg"></div></div>`;
+}
+async function setSubject(id, subject){
+  if(!sb) return;
+  const { error } = await sb.from("profiles").update({subject}).eq("id", id);
+  $("msg").className = error ? "bad" : "ok"; $("msg").textContent = error ? error.message : "Subject saved.";
+}
+async function setRole(id, role){
+  if(!sb) return;
+  const { error } = await sb.from("profiles").update({role}).eq("id", id);
+  $("msg").className = error ? "bad" : "ok"; $("msg").textContent = error ? error.message : "Role updated.";
+}
+
+// ---------- auth + boot ----------
+async function start(u){
+  user = u; $("login").classList.add("hide"); $("app").classList.remove("hide");
+  if(sb){ const { data } = await sb.from("profiles").select("*").eq("id", u.id).single(); me = data || {role:"student"}; }
+  else me = {role: location.search.includes("teacher") ? "teacher" : "student", full_name:"Demo"};
+  isT = me.role === "teacher";
+  nm = me.full_name || me.login_id || "Student";
+  $("uname").textContent = nm + (isT ? " · " + (me.subject || "Teacher") : me.login_id ? " · Roll " + me.login_id : "");
+  classes = await loadClasses(); log = await loadLog(); notices = await loadNotices(); page = "Dashboard"; render();
+}
+async function login(){
+  const id = $("em").value.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
+  if(!sb) return start({email:null});
+  const { data, error } = await sb.auth.signInWithPassword({email: id + "@presentsir.app", password: $("pw").value});
+  if(error) return $("lmsg").textContent = error.message === "Invalid login credentials" ? "Roll No / Teacher ID or password is incorrect." : error.message;
+  start(data.user);
+}
+$("signin").onclick = login;
+$("pw").onkeydown = e => { if(e.key === "Enter") login(); };
+$("logout").onclick = async () => { if(sb) await sb.auth.signOut(); location.reload(); };
+(async () => {
+  if(!sb) return start({email:null});
+  const { data } = await sb.auth.getSession();
+  data.session ? start(data.session.user) : $("login").classList.remove("hide");
+})();
+</script>
+</body>
+</html>
